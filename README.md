@@ -6,13 +6,3 @@ This is a web browser-based editor for networks (more precisely, directed graphs
 You can place nodes and links intuitively and export the network as JSON.
 
 Primarily made by Claude 3 Opus (they named it too), under supervision of [Toru Seo](https://toruseo.jp/index_en.html) with help of GitHub Copilot. 
-
-## Example
-
-K3,3 graph
-
-<img src="https://github.com/toruseo/simple-interactive-network-editor/blob/main/example1.png" width="400"/>
-
-a road network
-
-<img src="https://github.com/toruseo/simple-interactive-network-editor/blob/main/example2.png" width="400"/>

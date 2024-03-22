@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html><head>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+
+  <script async src="https://www.googletagmanager.com/gtag/js?id=UA-111714220-1"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+
+    gtag('config', 'UA-111714220-1');
+  </script>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Cache-Control" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta name="Author" content="Toru Seo">
+  <meta name="viewport" content="width=device-width">
+  <meta name="referrer" content="unsafe-url">
+
+  <title>SINE: Simple Interactive Network Editor</title>
+  <style>
+    #canvas {
+      border: 1px solid black;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>SINE: Simple Interactive Network Editor</h1>
+  <p>
+    How to use:
+  </p>
+  <ul>
+    <li><b>Click</b> to add a node</li>
+    <li><b>Ctrl+Click</b> at a node and then <b>Drag</b> to another node to add a link</li>
+    <li><b>Right-Click</b> on a node or link to delete it</li>
+  </ul>
+
+  <canvas id="canvas" width="800" height="600"></canvas>
+  <br>
+  <br>
+  Directional link style:
+  <input type="radio" id="rightCurveRadio" name="linkCurve" value="right"> Left-handed
+  <input type="radio" id="straightRadio" name="linkCurve" value="straight" checked> Straight
+  <input type="radio" id="leftCurveRadio" name="linkCurve" value="left"> Right-handed
+  <br>
+  <br>
+  <input type="checkbox" id="showNamesCheckbox"> Show Names
+  <br>
+  <br>
+  <input type="range" id="coefSlider" min="0.01" max="4" step="0.01" value="1">
+  length coefficient: <span id="coefValue">1</span> pixel/meter
+  <br>
+  <br>
+  <button id="saveButton">Export as JSON</button>
+  <hr>
+  Primarily made by Claude 3 Opus (they named it too), under supervision of <a href="https://toruseo.jp/index_en.html" target="_blank">Toru Seo</a> with help of GitHub Copilot. Released under MIT License or CC-BY 4.0.
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const nodes = [];
+    const links = [];
+    let selectedNode = null;
+
+    const coefSlider = document.getElementById('coefSlider');
+    const coefValue = document.getElementById('coefValue');
+    let coef = 1;
+
+    const curveLinkCheckbox = document.getElementById('curveLinkCheckbox');
+    const showNamesCheckbox = document.getElementById('showNamesCheckbox');
+
+    coefSlider.addEventListener('input', function () {
+        const logCoef = parseFloat(this.value);
+        coef = Math.pow(10, logCoef)/100;
+        coefValue.textContent = coef.toFixed(2);
+        drawNetwork();
+      });
+
+    const linkCurveRadios = document.querySelectorAll('input[name="linkCurve"]');
+    linkCurveRadios.forEach(radio => {
+      radio.addEventListener('change', drawNetwork);
+    });
+
+    showNamesCheckbox.addEventListener('change', drawNetwork);
+
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('contextmenu', handleContextMenu);
+    let linkSource = null;
+    let creatingLink = false;
+
+    function startLinkCreation(node) {
+      linkSource = node;
+      creatingLink = true;
+    }
+
+    let nodeCounter = 1;
+    let linkCounter = 1;
+
+    function generateNodeName() {
+      const name = `N${nodeCounter}`;
+      nodeCounter++;
+      return name;
+    }
+
+    function generateLinkName() {
+      const name = `L${linkCounter}`;
+      linkCounter++;
+      return name;
+    }
+
+    function endLinkCreation(event) {
+      const x = event.clientX - canvas.offsetLeft;
+      const y = event.clientY - canvas.offsetTop;
+      const targetNode = findNodeAtPosition(x, y);
+
+      if (targetNode && targetNode !== linkSource) {
+        const linkName = generateLinkName();
+        createLink(linkSource, targetNode, linkName);
+      }
+
+      linkSource = null;
+      creatingLink = false;
+      drawNetwork();
+    }
+
+    function handleMouseDown(event) {
+      event.preventDefault();
+      const x = event.clientX - canvas.offsetLeft;
+      const y = event.clientY - canvas.offsetTop;
+      const node = findNodeAtPosition(x, y);
+      const link = findLinkAtPosition(x, y);
+
+      if (event.button === 0) {
+        if (node) {
+          if (event.ctrlKey) {
+            startLinkCreation(node);
+          } else {
+            selectedNode = node;
+          }
+        } else if (link) {
+          const newNode = createNode(x, y, generateNodeName());
+          splitLink(link, newNode);
+        } else {
+          createNode(x, y, generateNodeName());
+        }
+      } else if (event.button === 2) {
+        if (node) {
+          removeNode(node);
+        }
+      }
+    }
+    function splitLink(link, newNode) {
+      const sourceNode = link.source;
+      const targetNode = link.target;
+      removeLink(link);
+      createLink(sourceNode, newNode, generateLinkName());
+      createLink(newNode, targetNode, generateLinkName());
+      drawNetwork();
+    }
+    function handleMouseMove(event) {
+      if (selectedNode) {
+        if (event.buttons === 1) {
+          selectedNode.x = event.clientX - canvas.offsetLeft;
+          selectedNode.y = event.clientY - canvas.offsetTop;
+          drawNetwork();
+        }
+      }
+
+      if (creatingLink) {
+        drawNetwork();
+        const x = event.clientX - canvas.offsetLeft;
+        const y = event.clientY - canvas.offsetTop;
+        drawLinkInProgress(linkSource.x, linkSource.y, x, y);
+      }
+    }
+
+    function handleMouseUp(event) {
+      if (creatingLink) {
+        endLinkCreation(event);
+      } else {
+        selectedNode = null;
+      }
+    }
+
+    function handleContextMenu(event) {
+      event.preventDefault();
+      const x = event.clientX - canvas.offsetLeft;
+      const y = event.clientY - canvas.offsetTop;
+      const link = findLinkAtPosition(x, y);
+
+      if (link) {
+        removeLink(link);
+        drawNetwork();
+      }
+    }
+    function createNode(x, y, name) {
+      const node = { x, y, name };
+      nodes.push(node);
+      drawNetwork();
+      return node;
+    }
+
+    function removeNode(node) {
+      const index = nodes.indexOf(node);
+      if (index !== -1) {
+        nodes.splice(index, 1);
+        links.forEach((link, i) => {
+          if (link.source === node || link.target === node) {
+            links.splice(i, 1);
+          }
+        });
+        drawNetwork();
+      }
+    }
+
+    function createLink(source, target, name) {
+      const link = { source, target, name };
+      links.push(link);
+    }
+
+    function removeLink(link) {
+      const index = links.indexOf(link);
+      if (index !== -1) {
+        links.splice(index, 1);
+      }
+    }
+
+    function findNodeAtPosition(x, y) {
+      for (const node of nodes) {
+        const dx = x - node.x;
+        const dy = y - node.y;
+        if (dx * dx + dy * dy <= 100) {
+          return node;
+        }
+      }
+      return null;
+    }
+
+    function findLinkAtPosition(x, y) {
+      for (const link of links) {
+        const dx = link.target.x - link.source.x;
+        const dy = link.target.y - link.source.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        const angle = Math.atan2(dy, dx);
+
+        let minDist = Infinity;
+        const numSegments = 100;
+        for (let i = 0; i <= numSegments; i++) {
+          const t = i / numSegments;
+          let px, py;
+
+          const linkCurve = document.querySelector('input[name="linkCurve"]:checked').value;
+          if (linkCurve === 'right') {
+            const offsetX = Math.cos(angle + Math.PI / 6) * 40;
+            const offsetY = Math.sin(angle + Math.PI / 6) * 40;
+            const midX = (link.source.x + link.target.x) / 2;
+            const midY = (link.source.y + link.target.y) / 2;
+            const controlX = midX - offsetX;
+            const controlY = midY - offsetY;
+            px = (1 - t) * (1 - t) * link.source.x + 2 * (1 - t) * t * controlX + t * t * link.target.x;
+            py = (1 - t) * (1 - t) * link.source.y + 2 * (1 - t) * t * controlY + t * t * link.target.y;
+          } else if (linkCurve === 'straight') {
+            px = link.source.x + t * dx;
+            py = link.source.y + t * dy;
+          } else if (linkCurve === 'left') {
+            const offsetX = Math.cos(angle - Math.PI / 6) * 40;
+            const offsetY = Math.sin(angle - Math.PI / 6) * 40;
+            const midX = (link.source.x + link.target.x) / 2;
+            const midY = (link.source.y + link.target.y) / 2;
+            const controlX = midX - offsetX;
+            const controlY = midY - offsetY;
+            px = (1 - t) * (1 - t) * link.source.x + 2 * (1 - t) * t * controlX + t * t * link.target.x;
+            py = (1 - t) * (1 - t) * link.source.y + 2 * (1 - t) * t * controlY + t * t * link.target.y;
+          }
+
+          const dist = Math.sqrt((x - px) * (x - px) + (y - py) * (y - py));
+          if (dist < minDist) {
+            minDist = dist;
+          }
+        }
+
+        if (minDist <= 5) {
+          return link;
+        }
+      }
+      return null;
+    }
+
+    function drawLinkInProgress(startX, startY, endX, endY) {
+      ctx.strokeStyle = 'gray';
+      ctx.lineWidth = 2;
+      const linkCurve = document.querySelector('input[name="linkCurve"]:checked').value;
+      if (linkCurve === 'right') {
+        drawRightCurvedLink(startX, startY, endX, endY);
+      } else if (linkCurve === 'straight') {
+        drawStraightLink(startX, startY, endX, endY);
+      } else if (linkCurve === 'left') {
+        drawLeftCurvedLink(startX, startY, endX, endY);
+      }
+    }
+
+    function drawNetwork() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.strokeStyle = 'black';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < links.length; i++) {
+        const link = links[i];
+        const dx = link.target.x - link.source.x;
+        const dy = link.target.y - link.source.y;
+        link.length = Math.sqrt(dx * dx + dy * dy) * coef;
+
+        const linkCurve = document.querySelector('input[name="linkCurve"]:checked').value;
+        if (linkCurve === 'right') {
+          drawRightCurvedLink(link.source.x, link.source.y, link.target.x, link.target.y);
+        } else if (linkCurve === 'straight') {
+          drawStraightLink(link.source.x, link.source.y, link.target.x, link.target.y);
+        } else if (linkCurve === 'left') {
+          drawLeftCurvedLink(link.source.x, link.source.y, link.target.x, link.target.y);
+        }
+
+        if (showNamesCheckbox.checked) {
+          drawLinkName(link);
+        }
+      }
+
+      for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i];
+        drawNode(node.x, node.y);
+
+        if (showNamesCheckbox.checked) {
+          drawNodeName(node.x, node.y, node.name);
+        }
+      }
+    }
+
+    function drawStraightLink(startX, startY, endX, endY) {
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+    }
+
+    function drawRightCurvedLink(startX, startY, endX, endY) {
+      const dx = endX - startX;
+      const dy = endY - startY;
+      const angle = Math.atan2(dy, dx);
+      const offsetX = Math.cos(angle + Math.PI / 6) * 40;
+      const offsetY = Math.sin(angle + Math.PI / 6) * 40;
+      const midX = (startX + endX) / 2;
+      const midY = (startY + endY) / 2;
+      const controlX = midX - offsetX;
+      const controlY = midY - offsetY;
+
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.quadraticCurveTo(controlX, controlY, endX, endY);
+      ctx.stroke();
+    }
+
+    function drawLeftCurvedLink(startX, startY, endX, endY) {
+      const dx = endX - startX;
+      const dy = endY - startY;
+      const angle = Math.atan2(dy, dx);
+      const offsetX = Math.cos(angle - Math.PI / 6) * 40;
+      const offsetY = Math.sin(angle - Math.PI / 6) * 40;
+      const midX = (startX + endX) / 2;
+      const midY = (startY + endY) / 2;
+      const controlX = midX - offsetX;
+      const controlY = midY - offsetY;
+
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.quadraticCurveTo(controlX, controlY, endX, endY);
+      ctx.stroke();
+    }
+    function drawLinkName(link) {
+      const midX = (link.source.x + link.target.x) / 2;
+      const midY = (link.source.y + link.target.y) / 2;
+      const dx = link.target.x - link.source.x;
+      const dy = link.target.y - link.source.y;
+      const angle = Math.atan2(dy, dx);
+
+      let offsetX, offsetY;
+      const linkCurve = document.querySelector('input[name="linkCurve"]:checked').value;
+      if (linkCurve === 'right') {
+        offsetX = Math.cos(angle + Math.PI / 6) * 40;
+        offsetY = Math.sin(angle + Math.PI / 6) * 40;
+      } else if (linkCurve === 'straight') {
+        offsetX = Math.cos(angle) * 40;
+        offsetY = Math.sin(angle) * 40;
+      } else if (linkCurve === 'left') {
+        offsetX = Math.cos(angle - Math.PI / 6) * 40;
+        offsetY = Math.sin(angle - Math.PI / 6) * 40;
+      }
+
+      ctx.save();
+      ctx.font = '12px Arial';
+      ctx.fillStyle = 'blue';
+      ctx.strokeStyle = 'white';
+      ctx.translate(midX - offsetX, midY - offsetY);
+      ctx.strokeText(`${link.name} (${link.length.toFixed(0)} m)`, 0, 0);
+      ctx.fillText(`${link.name} (${link.length.toFixed(0)} m)`, 0, 0);
+      ctx.strokeStyle = 'black';
+      ctx.restore();
+    }
+
+    function drawNode(x, y) {
+      ctx.beginPath();
+      ctx.arc(x, y, 10, 0, 2 * Math.PI);
+      ctx.fillStyle = 'white';
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    function drawNodeName(x, y, name) {
+      ctx.font = '12px Arial';
+      ctx.fillStyle = 'green';
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.strokeText(name, x - 7, y + 5);
+      ctx.fillText(name, x - 7, y + 5);
+      ctx.strokeStyle = 'black';
+    }
+
+    function saveNetwork() {
+      const networkData = {
+        nodes: nodes.map(node => ({
+          name: node.name,
+          x: node.x * coef,
+          y: node.y * coef
+        })),
+        links: links.map(link => ({
+          name: link.name,
+          source: link.source.name,
+          target: link.target.name,
+          length: link.length
+        }))
+      };
+
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(networkData));
+      const downloadAnchorNode = document.createElement('a');
+      downloadAnchorNode.setAttribute("href", dataStr);
+      downloadAnchorNode.setAttribute("download", "network.json");
+      document.body.appendChild(downloadAnchorNode);
+      downloadAnchorNode.click();
+      downloadAnchorNode.remove();
+    }
+
+    document.getElementById('saveButton').addEventListener('click', saveNetwork);
+  </script>
+</body>
+
+</html>
